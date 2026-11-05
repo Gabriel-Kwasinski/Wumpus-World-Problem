@@ -6,6 +6,10 @@
 :-dynamic energia/1.
 :-dynamic pontuacao/1.
 
+% Base de conhecimento do agente
+:-dynamic percebido/3.   % percebido(X,Y,ListaDePercepcoes) sentida na casa visitada (X,Y)
+:-dynamic tem/3.         % tem(X,Y,Coisa)     -> certeza de que Coisa esta em (X,Y)
+:-dynamic nao_tem/3.     % nao_tem(X,Y,Coisa) -> certeza de que Coisa NAO esta em (X,Y)
 :-consult('mapa.pl').
 
 delete([], _, []).
@@ -15,12 +19,14 @@ delete([Elem|Tail], Del, Result) :-
     ;   Result = [Elem|Rest],
         delete(Tail, Del, Rest)
     ).
-	
 
 
-reset_game :- retractall(memory(_,_,_)), 
-			retractall(visitado(_,_)), 
+reset_game :- retractall(memory(_,_,_)),
+			retractall(visitado(_,_)),
 			retractall(certeza(_,_)),
+			retractall(percebido(_,_,_)),
+			retractall(tem(_,_,_)),
+			retractall(nao_tem(_,_,_)),
 			retractall(energia(_)),
 			retractall(pontuacao(_)),
 			retractall(posicao(_,_,_)),
@@ -32,6 +38,32 @@ reset_game :- retractall(memory(_,_,_)),
 :-reset_game.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Geometria (nao depende do conteudo do mapa)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%vizinho(X,Y,VX,VY): (VX,VY) e uma das 4 casas adjacentes a (X,Y) dentro da arena
+vizinho(X,Y,VX,Y) :- map_size(MAX_X,_), X < MAX_X, VX is X + 1.
+vizinho(X,Y,VX,Y) :- X > 1, VX is X - 1.
+vizinho(X,Y,X,VY) :- map_size(_,MAX_Y), Y < MAX_Y, VY is Y + 1.
+vizinho(X,Y,X,VY) :- Y > 1, VY is Y - 1.
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% AMBIENTE
+%% Esta e a unica parte do programa que consulta o mapa real (tile/3).
+%% O agente recebe apenas: a lista de percepcoes da casa atual (sentidos/1)
+%% e o que sentiu ao chegar na casa (kb_chegada/3: nada, dano, queda, teleporte).
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%sensores: percepcoes na posicao atual
+sentidos(Ps) :- posicao(X,Y,_), findall(S, sentido(X,Y,S), L), sort(L, Ps).
+
+sentido(X,Y,brisa)   :- vizinho(X,Y,VX,VY), tile(VX,VY,'P').
+sentido(X,Y,palmas)  :- vizinho(X,Y,VX,VY), tile(VX,VY,'T').
+sentido(X,Y,passos)  :- vizinho(X,Y,VX,VY), (tile(VX,VY,'D') ; tile(VX,VY,'d')).
+sentido(X,Y,brilho)  :- tile(X,Y,'O').
+sentido(X,Y,reflexo) :- tile(X,Y,'U').
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Controle de Status
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -39,20 +71,22 @@ reset_game :- retractall(memory(_,_,_)),
 atualiza_pontuacao(X):- pontuacao(P), retract(pontuacao(P)), NP is P + X, assert(pontuacao(NP)),!.
 
 %atualiza energia
-atualiza_energia(N):- energia(E), retract(energia(E)), NE is E + N, 
+atualiza_energia(N):- energia(E), retract(energia(E)), NE is E + N,
 					(
 					 (NE =<0, assert(energia(0)),posicao(X,Y,_),retract(posicao(_,_,_)), assert(posicao(X,Y,morto)),!);
 					 (NE >100, assert(energia(100)),!);
 					  (NE >0,assert(energia(NE)),!)
 					 ).
 
-%verifica situacao da nova posicao e atualiza energia e pontos
-verifica_player :- posicao(X,Y,_), tile(X,Y,'P'), atualiza_energia(-100), atualiza_pontuacao(-1000),!.
-verifica_player :- posicao(X,Y,_), tile(X,Y,'D'), random_between(-80,-50,D), atualiza_energia(D),!.
-verifica_player :- posicao(X,Y,_), tile(X,Y,'d'), random_between(-50,-25,D), atualiza_energia(D),!.
-verifica_player :- posicao(X,Y,Z), tile(X,Y,'T'), 
+%verifica situacao da nova posicao, atualiza energia e pontos
+%e informa ao agente o que ele sentiu ao chegar (percepcao de evento)
+verifica_player :- posicao(X,Y,_), tile(X,Y,'P'), kb_chegada(X,Y,queda), atualiza_energia(-100), atualiza_pontuacao(-1000),!.
+verifica_player :- posicao(X,Y,_), tile(X,Y,'D'), kb_chegada(X,Y,dano), random_between(-80,-50,D), atualiza_energia(D),!.
+verifica_player :- posicao(X,Y,_), tile(X,Y,'d'), kb_chegada(X,Y,dano), random_between(-50,-25,D), atualiza_energia(D),!.
+verifica_player :- posicao(X,Y,Z), tile(X,Y,'T'), kb_chegada(X,Y,teleporte),
 					map_size(SX,SY), random_between(1,SX,NX), random_between(1,SY,NY),
 				retract(posicao(X,Y,Z)), assert(posicao(NX,NY,Z)), atualiza_obs, verifica_player,!.
+verifica_player :- posicao(X,Y,_), kb_chegada(X,Y,nada),!
 verifica_player :- true.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -71,116 +105,115 @@ virar_esquerda :- posicao(X,Y, oeste), retract(posicao(_,_,_)), assert(posicao(X
 virar_esquerda :- posicao(X,Y, sul), retract(posicao(_,_,_)), assert(posicao(X, Y, leste)),atualiza_pontuacao(-1),!.
 virar_esquerda :- posicao(X,Y, leste), retract(posicao(_,_,_)), assert(posicao(X, Y, norte)),atualiza_pontuacao(-1),!.
 
-%andar
-andar :- posicao(X,Y,P), P = norte, map_size(_,MAX_Y), Y < MAX_Y, YY is Y + 1, 
-         retract(posicao(X,Y,_)), assert(posicao(X, YY, P)), 
-		 %((retract(certeza(X,YY)), assert(certeza(X,YY))); assert(certeza(X,YY))),
-		 set_real(X,YY),
-		 ((retract(visitado(X,Y)), assert(visitado(X,Y))); assert(visitado(X,Y))),atualiza_pontuacao(-1),!.
-		 
-andar :- posicao(X,Y,P), P = sul,  Y > 1, YY is Y - 1, 
-         retract(posicao(X,Y,_)), assert(posicao(X, YY, P)), 
-		 %((retract(certeza(X,YY)), assert(certeza(X,YY))); assert(certeza(X,YY))),
-		 set_real(X,YY),
-		 ((retract(visitado(X,Y)), assert(visitado(X,Y))); assert(visitado(X,Y))),atualiza_pontuacao(-1),!.
+%andar (a KB e atualizada depois, por atualiza_obs e verifica_player)
+andar :- posicao(X,Y,P), P = norte, map_size(_,MAX_Y), Y < MAX_Y, YY is Y + 1,
+         retract(posicao(X,Y,_)), assert(posicao(X, YY, P)), atualiza_pontuacao(-1),!.
+andar :- posicao(X,Y,P), P = sul,  Y > 1, YY is Y - 1,
+         retract(posicao(X,Y,_)), assert(posicao(X, YY, P)), atualiza_pontuacao(-1),!.
+andar :- posicao(X,Y,P), P = leste, map_size(MAX_X,_), X < MAX_X, XX is X + 1,
+         retract(posicao(X,Y,_)), assert(posicao(XX, Y, P)), atualiza_pontuacao(-1),!.
+andar :- posicao(X,Y,P), P = oeste,  X > 1, XX is X - 1,
+         retract(posicao(X,Y,_)), assert(posicao(XX, Y, P)), atualiza_pontuacao(-1),!.
 
-andar :- posicao(X,Y,P), P = leste, map_size(MAX_X,_), X < MAX_X, XX is X + 1, 
-         retract(posicao(X,Y,_)), assert(posicao(XX, Y, P)), 
-		 %((retract(certeza(XX,Y)), assert(certeza(XX,Y))); assert(certeza(XX,Y))),
-		 set_real(XX,Y),
-		 ((retract(visitado(X,Y)), assert(visitado(X,Y))); assert(visitado(X,Y))),atualiza_pontuacao(-1),!.
-
-andar :- posicao(X,Y,P), P = oeste,  X > 1, XX is X - 1, 
-         retract(posicao(X,Y,_)), assert(posicao(XX, Y, P)), 
-		 %((retract(certeza(XX,Y)), assert(certeza(XX,Y))); assert(certeza(XX,Y))),
-		 set_real(XX,Y),
-		 ((retract(visitado(X,Y)), assert(visitado(X,Y))); assert(visitado(X,Y))),atualiza_pontuacao(-1),!.
-		 
-%pegar	
-pegar :- posicao(X,Y,_), tile(X,Y,'O'), retract(tile(X,Y,'O')), assert(tile(X,Y,'')), atualiza_pontuacao(-5), atualiza_pontuacao(500),set_real(X,Y),!. 
-pegar :- posicao(X,Y,_), tile(X,Y,'U'), retract(tile(X,Y,'U')), assert(tile(X,Y,'')), atualiza_pontuacao(-5), atualiza_energia(50),set_real(X,Y),!. 
+%pegar
+pegar :- posicao(X,Y,_), tile(X,Y,'O'), retract(tile(X,Y,'O')), assert(tile(X,Y,'')), atualiza_pontuacao(-5), atualiza_pontuacao(500),!.
+pegar :- posicao(X,Y,_), tile(X,Y,'U'), retract(tile(X,Y,'U')), assert(tile(X,Y,'')), atualiza_pontuacao(-5), atualiza_energia(50),!.
 pegar :- atualiza_pontuacao(-5),!.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% Funcoes Auxiliares de navegação e observação
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-		 
-%Define as 4 adjacencias		 
-adjacente(X, Y) :- posicao(PX, Y, _), map_size(MAX_X,_),PX < MAX_X, X is PX + 1.  
-adjacente(X, Y) :- posicao(PX, Y, _), PX > 1, X is PX - 1.  
-adjacente(X, Y) :- posicao(X, PY, _), map_size(_,MAX_Y),PY < MAX_Y, Y is PY + 1.  
-adjacente(X, Y) :- posicao(X, PY, _), PY > 1, Y is PY - 1.  
-
-%cria lista com a adjacencias
-adjacentes(L) :- findall(Z,(adjacente(X,Y),tile(X,Y,Z)),L).
-
-%define observacoes locais
-observacao_loc(brilho,L) :- member('O',L).
-observacao_loc(reflexo,L) :- member('U',L).
-
-%define observacoes adjacentes
-observacao_adj(brisa,L) :- member('P',L).
-observacao_adj(palmas,L) :- member('T',L).
-observacao_adj(passos,L) :- member('D',L).
-observacao_adj(passos,L) :- member('d',L).
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% Tratamento de KB e observações
+%% AGENTE - Base de conhecimento (KB)
+%% Nenhum predicado desta secao consulta tile/3: tudo e deduzido das
+%% percepcoes recebidas (percebido/3) e dos eventos de chegada.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%consulta e processa observações
-atualiza_obs:-adj_cand_obs(LP), observacoes(LO), iter_pos_list(LP,LO), observacao_certeza, observacao_vazia.
+%perigos e o sinal que produzem nas casas vizinhas
+perigo(poco).
+perigo(morcego).
+perigo(inimigo).
 
-%adjacencias candidatas p/ a observacao (aquelas não visitadas)
-adj_cand_obs(L) :- findall((X,Y), (adjacente(X, Y), \+visitado(X,Y)), L).
+sinal(poco, brisa).
+sinal(morcego, palmas).
+sinal(inimigo, passos).
 
-%cria lista de observacoes
-observacoes(X) :- adjacentes(L), findall(Y, observacao_adj(Y,L), X).
+%itens e o sinal que produzem na propria casa
+item(ouro, brilho).
+item(cura, reflexo).
 
-%itera posicoes da lista para adicionar observacoes
-iter_pos_list([], _) :- !.
-iter_pos_list([H|T], LO) :- H=(X,Y), 
-							((corrige_observacoes_antigas(X, Y, LO),!);
-							adiciona_observacoes(X, Y, LO)),
-							iter_pos_list(T, LO).							 
+%simbolo usado em memory/3 (lido pelo gmap.py)
+simbolo(H, S) :- sinal(H, S).
+simbolo(I, S) :- item(I, S).
 
-%Corrige observacoes antigas na memoria que ficaram com apenas uma adjacencia
-corrige_observacoes_antigas(X, Y, []):- \+certeza(X,Y), memory(X,Y,[]).
-corrige_observacoes_antigas(X, Y, LO):-
-	\+certeza(X,Y), \+ memory(X,Y,[]), memory(X, Y, LM), intersection(LO, LM, L), 
-	retract(memory(X, Y, LM)), assert(memory(X, Y, L)).
+%afirma um fato na KB sem duplicar
+kb_afirma(F) :- ( call(F) -> true ; assertz(F) ).
 
-%Adiciona observacoes na memoria
-adiciona_observacoes(X, Y, _) :- certeza(X,Y),!.
-adiciona_observacoes(X, Y, LO) :- \+certeza(X,Y), \+ memory(X,Y,_), assert(memory(X, Y, LO)).
+%recebe as percepcoes da posicao atual e atualiza a KB
+atualiza_obs :- posicao(X,Y,_), sentidos(Ps), kb_percebe(X,Y,Ps).
 
-%Quando há apenas uma observação e uma unica posição incerta, deduz que a observação está na casa incerta
-%e marca como certeza
-%observacao_certeza:- findall((X,Y), (adjacente(X, Y), 
-%						((\+visitado(X,Y), \+certeza(X,Y));(certeza(X,Y),memory(X,Y,ZZ),ZZ\=[])),
-%						memory(X,Y,Z), Z\=[]), L), ((length(L,1),L=[(XX,YY)], assert(certeza(XX,YY)),!);true).
-						
-observacao_certeza:- observacao_certeza('brisa'),
-						observacao_certeza('palmas'),
-						observacao_certeza('passos').
-						
-observacao_certeza(Z):- findall((X,Y), (adjacente(X, Y), 
-						((\+visitado(X,Y), \+certeza(X,Y));(certeza(X,Y),memory(X,Y,[Z]))),
-						memory(X,Y,[Z])), L), ((length(L,1),L=[(XX,YY)], assert(certeza(XX,YY)),!);true).						
+kb_percebe(X,Y,Ps) :-
+	retractall(percebido(X,Y,_)), assertz(percebido(X,Y,Ps)),
+	kb_afirma(visitado(X,Y)),
+	forall(item(I,S),
+	       ( memberchk(S,Ps) -> kb_afirma(tem(X,Y,I)) ; retractall(tem(X,Y,I)) )),
+	kb_fecha.
 
-%Quando posição não tem observações
-observacao_vazia:- adj_cand_obs(LP), observacao_vazia(LP).
-observacao_vazia([]) :- !.
-observacao_vazia([H|T]) :- H=(X,Y), ((memory(X,Y,[]), \+certeza(X,Y),assert(certeza(X,Y)),!);true), observacao_vazia(T).
+%o que o agente sentiu ao entrar na casa
+kb_chegada(X,Y,nada)      :- forall(perigo(H), kb_afirma(nao_tem(X,Y,H))), kb_fecha.
+kb_chegada(X,Y,dano)      :- kb_afirma(tem(X,Y,inimigo)), kb_fecha.
+kb_chegada(X,Y,queda)     :- kb_afirma(tem(X,Y,poco)), kb_fecha.
+kb_chegada(X,Y,teleporte) :- kb_afirma(tem(X,Y,morcego)), kb_fecha.
 
-%Quando posicao é visitada, atualiza memoria de posicao com a informação real do mapa 
-set_real(X,Y):- ((retract(certeza(X,Y)), assert(certeza(X,Y)),!); assert(certeza(X,Y))), set_real2(X,Y),!.
-set_real2(X,Y):- tile(X,Y,'P'), ((retract(memory(X,Y,_)),assert(memory(X,Y,[brisa])),!);assert(memory(X,Y,[brisa]))),!.
-set_real2(X,Y):- tile(X,Y,'O'), ((retract(memory(X,Y,_)),assert(memory(X,Y,[brilho])),!);assert(memory(X,Y,[brilho]))),!.
-set_real2(X,Y):- tile(X,Y,'T'), ((retract(memory(X,Y,_)),assert(memory(X,Y,[palmas])),!);assert(memory(X,Y,[palmas]))),!.
-set_real2(X,Y):- ((tile(X,Y,'D'),!); tile(X,Y,'d')), ((retract(memory(X,Y,_)),assert(memory(X,Y,[passos])),!);assert(memory(X,Y,[passos]))),!.
-set_real2(X,Y):- tile(X,Y,'U'), ((retract(memory(X,Y,_)),assert(memory(X,Y,[reflexo])),!);assert(memory(X,Y,[reflexo]))),!.
-set_real2(X,Y):- tile(X,Y,''), ((retract(memory(X,Y,_)),assert(memory(X,Y,[])),!);assert(memory(X,Y,[]))),!.
+kb_fecha :- kb_inferir, kb_atualiza_visao.
+
+%encadeamento para frente ate nao haver fatos novos
+kb_inferir :- kb_regra(F), \+ call(F), !, assertz(F), kb_inferir.
+kb_inferir.
+
+%R1: sem o sinal de H numa casa visitada -> nenhum vizinho tem H
+kb_regra(nao_tem(X,Y,H)) :-
+	percebido(VX,VY,Ps), sinal(H,S), \+ memberchk(S,Ps), vizinho(VX,VY,X,Y).
+
+%R2: com o sinal de H e apenas um vizinho ainda possivel -> esse vizinho tem H
+kb_regra(tem(X,Y,H)) :-
+	percebido(VX,VY,Ps), sinal(H,S), memberchk(S,Ps),
+	findall((CX,CY), (vizinho(VX,VY,CX,CY), \+ nao_tem(CX,CY,H)), [(X,Y)]).
+
+%R3: cada casa contem no maximo uma coisa
+kb_regra(nao_tem(X,Y,H2)) :- tem(X,Y,H), perigo(H2), H2 \== H.
+
+%R4: dois perigos do MESMO tipo (poco, morcego ou inimigo) nunca estao
+%    a 1 ou 2 passos cardinais um do outro (adjacentes, 2 casas em linha), ou seja, distancia de
+%    Manhattan <= 2 -> descarta esse perigo nessas casas.
+kb_regra(nao_tem(X,Y,H)) :- perigo(H), tem(PX,PY,H), perigo_proibido(PX,PY,X,Y).
+
+perigo_proibido(PX,PY,X,Y) :-
+	between(-2, 2, DX), between(-2, 2, DY),
+	D is abs(DX) + abs(DY), D >= 1, D =< 2,
+	X is PX + DX, Y is PY + DY,
+	map_size(MAX_X,MAX_Y), X >= 1, X =< MAX_X, Y >= 1, Y =< MAX_Y.
+
+%H e possivel em (X,Y): nao descartado e algum vizinho visitado sentiu o sinal
+kb_possivel(X,Y,H) :-
+	perigo(H), \+ nao_tem(X,Y,H), sinal(H,S),
+	percebido(VX,VY,Ps), memberchk(S,Ps), vizinho(VX,VY,X,Y), !.
+
+%todos os perigos da casa ja estao decididos
+kb_decidida(X,Y) :- forall(perigo(H), (tem(X,Y,H) ; nao_tem(X,Y,H))).
+
+kb_celula(X,Y) :- visitado(X,Y).
+kb_celula(X,Y) :- tem(X,Y,_).
+kb_celula(X,Y) :- nao_tem(X,Y,_).
+kb_celula(X,Y) :- percebido(VX,VY,_), vizinho(VX,VY,X,Y).
+
+kb_conteudo(X,Y,L) :-
+	findall(S, (simbolo(C,S), once((tem(X,Y,C) ; kb_possivel(X,Y,C)))), L).
+
+%reconstroi memory/3 e certeza/2 (visao usada pelo gmap.py e show_mem) a partir da KB
+kb_atualiza_visao :-
+	retractall(memory(_,_,_)), retractall(certeza(_,_)),
+	( setof((X,Y), kb_celula(X,Y), Cs) -> true ; Cs = [] ),
+	forall(member((X,Y), Cs),
+	       ( kb_conteudo(X,Y,L), assertz(memory(X,Y,L)),
+	         ( kb_decidida(X,Y) -> assertz(certeza(X,Y)) ; true ) )).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -206,7 +239,7 @@ show_map(_,0) :- energia(E), pontuacao(P), write('E: '), write(E), write('   P: 
 %% Mostra mapa conhecido
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-show_mem_info(X,Y) :- memory(X,Y,Z), 
+show_mem_info(X,Y) :- memory(X,Y,Z),
 		((visitado(X,Y), write('.'),!); (\+certeza(X,Y), write('?'),!); (certeza(X,Y), write('!'))),
 		((member(brisa, Z), write('P'));write(' ')),
 		((member(palmas, Z), write('T'));write(' ')),
@@ -214,13 +247,13 @@ show_mem_info(X,Y) :- memory(X,Y,Z),
 		((member(passos, Z), write('D'));write(' ')),
 		((member(reflexo, Z), write('U'));write(' ')),!.
 
-show_mem_info(X,Y) :- \+memory(X,Y,[]), 
+show_mem_info(X,Y) :- \+memory(X,Y,[]),
 			((visitado(X,Y), write('.'),!); (\+certeza(X,Y), write('?'),!); (certeza(X,Y), write('!'))),
-			write('     '),!.		
-		
-		
+			write('     '),!.
 
-show_mem_position(X,Y) :- posicao(X,Y,_), 
+
+
+show_mem_position(X,Y) :- posicao(X,Y,_),
 		((visitado(X,Y), write('.'),!); (certeza(X,Y), write('!'),!); write(' ')),
 		write(' '), show_player(X,Y),
 		((memory(X,Y,Z),
@@ -229,7 +262,6 @@ show_mem_position(X,Y) :- posicao(X,Y,_),
 		((member(reflexo, Z), write('U'));write(' ')),!);
 		(write('   '),!)).
 
-		
 show_mem_position(X,Y) :- show_mem_info(X,Y),!.
 
 
@@ -250,7 +282,6 @@ executa_acao(X) :- L=['virar_esquerda','virar_direita','andar','pegar'],random_b
 %executa_acao(andar) :- posicao(PX, _, leste), PX < 3, X = andar,!.
 %executa_acao(pegar) :- posicao(PX, PY,_), tem_ouro(PX, PY), !.
 %executa_acao(voltar) :- peguei_todos_ouros,!.
-
 
 
 
