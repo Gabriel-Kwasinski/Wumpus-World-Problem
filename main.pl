@@ -122,8 +122,8 @@ pegar :- atualiza_pontuacao(-5),!.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% AGENTE - Base de conhecimento (KB)
-%% Nenhum predicado desta secao consulta tile/3: tudo e deduzido das
-%% percepcoes recebidas (percebido/3) e dos eventos de chegada.
+%% tudo e deduzido das percepcoes recebidas (percebido/3) e
+%% dos eventos de chegada.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 %perigos e o sinal que produzem nas casas vizinhas
