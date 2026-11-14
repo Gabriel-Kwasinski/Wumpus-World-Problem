@@ -10,6 +10,11 @@
 :-dynamic percebido/3.   % percebido(X,Y,ListaDePercepcoes) sentida na casa visitada (X,Y)
 :-dynamic tem/3.         % tem(X,Y,Coisa)     -> certeza de que Coisa esta em (X,Y)
 :-dynamic nao_tem/3.     % nao_tem(X,Y,Coisa) -> certeza de que Coisa NAO esta em (X,Y)
+
+:-dynamic obs_por_casa/3.
+:-dynamic executa_acao/1.
+:-dynamic goal/2.
+
 :-consult('mapa.pl').
 
 delete([], _, []).
@@ -114,6 +119,20 @@ andar :- posicao(X,Y,P), P = leste, map_size(MAX_X,_), X < MAX_X, XX is X + 1,
          retract(posicao(X,Y,_)), assert(posicao(XX, Y, P)), atualiza_pontuacao(-1),!.
 andar :- posicao(X,Y,P), P = oeste,  X > 1, XX is X - 1,
          retract(posicao(X,Y,_)), assert(posicao(XX, Y, P)), atualiza_pontuacao(-1),!.
+
+%voltar
+voltar :- posicao(X,Y,P), P = norte, map_size(_,MAX_Y), Y > 1, YY is Y - 1, 
+		retract(posicao(X,Y,_)), assert(posicao(X, YY, P)), 
+		assert(visitado(X,Y)), atualiza_pontuacao(-1),!.
+voltar :- posicao(X,Y,P), P = sul,  Y < MAX_Y, YY is Y + 1, 
+         retract(posicao(X,Y,_)), assert(posicao(X, YY, P)), 
+		 assert(visitado(X,Y)), atualiza_pontuacao(-1),!.
+voltar :- posicao(X,Y,P), P = leste, map_size(MAX_X,_), X > 1, XX is X - 1, 
+         retract(posicao(X,Y,_)), assert(posicao(XX, Y, P)), 
+		 assert(visitado(X,Y)), atualiza_pontuacao(-1),!.
+voltar :- posicao(X,Y,P), P = oeste,  X < MAX_X, XX is X + 1, 
+         retract(posicao(X,Y,_)), assert(posicao(XX, Y, P)), 
+		 assert(visitado(X,Y)), atualiza_pontuacao(-1),!.
 
 %pegar
 pegar :- posicao(X,Y,_), tile(X,Y,'O'), retract(tile(X,Y,'O')), assert(tile(X,Y,'')), atualiza_pontuacao(-5), atualiza_pontuacao(500),!.
@@ -274,14 +293,66 @@ show_mem(_,0) :- energia(E), pontuacao(P), write('E: '), write(E), write('   P: 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%apagar esta linha - apenas para demonstracao aleatoria
-executa_acao(X) :- L=['virar_esquerda','virar_direita','andar','pegar'],random_between(1,4,I), nth1(I, L, X),!.
+eh_ultimo_elem(Elem, [Head|Tail]) :- (
+	(Head is Elem, Tail = []);
+	eh_ultimo_elem(Elem, Tail)
+).
 
-%apagar linhas abaixo... sao exemplos de resposta
-%executa_acao(andar) :- posicao(PX, _, oeste), PX > 1, X = andar,!.
-%executa_acao(andar) :- posicao(PX, _, leste), PX < 3, X = andar,!.
-%executa_acao(pegar) :- posicao(PX, PY,_), tem_ouro(PX, PY), !.
-%executa_acao(voltar) :- peguei_todos_ouros,!.
+esta_a_dir(X, Y)  :- posicao(PX, PY, _), map_size(MAX_X,_), X < MAX_X+1, PX < X.
+esta_a_esq(X, Y)  :- posicao(PX, PY, _), map_size(MAX_X,_), X > 0, PX > X.
+esta_acima(X, Y)  :- posicao(PX, PY, _), map_size(_,MAX_Y), Y < MAX_Y+1, Y > PY.
+esta_abaixo(X, Y) :- posicao(PX, PY, _), map_size(_,MAX_Y), Y > 0, Y < PY.
+
+atualiza_obs_por_casa :- posicao(PX, PY, _), observacoes([]), assert(obs_por_casa(PX, PY, none)).
+
+seguro(X,Y) :- (
+	obs_por_casa(X, Y, none); (
+		posicao(PX, PY, _), obs_por_casa(PX, PY, none), (
+			map_size(MAX_X,_), (X < MAX_X, X is PX + 1);
+			map_size(MAX_X,_), (X > 1, X is PX - 1);
+			map_size(_, MAX_Y), (Y < MAX_Y, Y is PY + 1);
+			map_size(_, MAX_Y), (Y > 1, Y is PY - 1)
+		)
+	)
+).
+
+goal(X, Y) :- ( 
+	adjacente(X,Y), seguro(X,Y), (
+		\+visitado(X,Y)
+	)
+).
+
+executa_acao(andar) :- (
+	goal(X,Y), adjacente(X,Y), (
+		esta_acima(X, Y), posicao(_, _, norte);
+		esta_abaixo(X, Y), posicao(_, _, sul);
+		esta_a_dir(X, Y), posicao(_, _, leste);
+		esta_a_esq(X, Y), posicao(_, _, oeste)
+	)
+).
+
+executa_acao(virar_direita) :- (
+	goal(X,Y), adjacente(X,Y), (
+		esta_acima(X, Y), posicao(_, _, oeste);
+		esta_abaixo(X, Y), posicao(_, _, leste);
+		esta_a_dir(X, Y), posicao(_, _, norte);
+		esta_a_esq(X, Y), posicao(_, _, sul)
+	)
+).
+
+executa_acao(virar_esquerda) :- (
+	goal(X,Y), adjacente(X,Y), (
+		esta_acima(X, Y), posicao(_, _, leste);
+		esta_abaixo(X, Y), posicao(_, _, oeste);
+		esta_a_dir(X, Y), posicao(_, _, sul);
+		esta_a_esq(X, Y), posicao(_, _, norte)
+	)
+).
+executa_acao(voltar) :- \+goal(_,_).
+executa_acao(virar_esquerda).
+
+
+obs_por_casa(1, 1, none).
 
 
 
