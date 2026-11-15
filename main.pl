@@ -10,6 +10,7 @@
 :-dynamic percebido/3.   % percebido(X,Y,ListaDePercepcoes) sentida na casa visitada (X,Y)
 :-dynamic tem/3.         % tem(X,Y,Coisa)     -> certeza de que Coisa esta em (X,Y)
 :-dynamic nao_tem/3.     % nao_tem(X,Y,Coisa) -> certeza de que Coisa NAO esta em (X,Y)
+% :-dynamic plano/1.
 
 :-consult('mapa.pl').
 
@@ -31,6 +32,7 @@ reset_game :- retractall(memory(_,_,_)),
 			retractall(energia(_)),
 			retractall(pontuacao(_)),
 			retractall(posicao(_,_,_)),
+%			retractall(plano(_)),
 			assert(energia(100)),
 			assert(pontuacao(0)),
 			assert(posicao(1,1, norte)).
@@ -297,12 +299,25 @@ esta_abaixo(X, Y) :- posicao(PX, PY, _), map_size(_,MAX_Y), Y > 0, Y < PY.
 seguro(X,Y) :- sentidos([]).
 seguro(X,Y) :- nao_tem(X,Y,poco), nao_tem(X,Y,inimigo).
 
+% atualiza_plano :- (
+%     posicao(PX,PY,_),
+%     plano([(PX,PY)|Resto]),
+%     retractall(plano(_)),
+%     assertz(plano(Resto)), !
+% ).
+% atualiza_plano.
+
 goal(X,Y) :- (
 	posicao(PX,PY,_),
 	vizinho(PX,PY,X,Y),
 	seguro(X,Y),
-	\+visitado(X,Y)
+	\+visitado(X,Y) 
 ).
+
+% goal(X, Y) :- (
+%     atualiza_plano,
+%     plano([(X, Y) | _]), !
+% ).
 
 executa_acao(andar) :- (
 	verifica_player,
