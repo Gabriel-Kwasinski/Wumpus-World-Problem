@@ -11,10 +11,6 @@
 :-dynamic tem/3.         % tem(X,Y,Coisa)     -> certeza de que Coisa esta em (X,Y)
 :-dynamic nao_tem/3.     % nao_tem(X,Y,Coisa) -> certeza de que Coisa NAO esta em (X,Y)
 
-:-dynamic obs_por_casa/3.
-:-dynamic executa_acao/1.
-:-dynamic goal/2.
-
 :-consult('mapa.pl').
 
 delete([], _, []).
@@ -91,7 +87,7 @@ verifica_player :- posicao(X,Y,_), tile(X,Y,'d'), kb_chegada(X,Y,dano), random_b
 verifica_player :- posicao(X,Y,Z), tile(X,Y,'T'), kb_chegada(X,Y,teleporte),
 					map_size(SX,SY), random_between(1,SX,NX), random_between(1,SY,NY),
 				retract(posicao(X,Y,Z)), assert(posicao(NX,NY,Z)), atualiza_obs, verifica_player,!.
-verifica_player :- posicao(X,Y,_), kb_chegada(X,Y,nada),!
+verifica_player :- posicao(X,Y,_), kb_chegada(X,Y,nada),!.
 verifica_player :- true.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -293,37 +289,24 @@ show_mem(_,0) :- energia(E), pontuacao(P), write('E: '), write(E), write('   P: 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-eh_ultimo_elem(Elem, [Head|Tail]) :- (
-	(Head is Elem, Tail = []);
-	eh_ultimo_elem(Elem, Tail)
-).
-
 esta_a_dir(X, Y)  :- posicao(PX, PY, _), map_size(MAX_X,_), X < MAX_X+1, PX < X.
 esta_a_esq(X, Y)  :- posicao(PX, PY, _), map_size(MAX_X,_), X > 0, PX > X.
 esta_acima(X, Y)  :- posicao(PX, PY, _), map_size(_,MAX_Y), Y < MAX_Y+1, Y > PY.
 esta_abaixo(X, Y) :- posicao(PX, PY, _), map_size(_,MAX_Y), Y > 0, Y < PY.
 
-atualiza_obs_por_casa :- posicao(PX, PY, _), observacoes([]), assert(obs_por_casa(PX, PY, none)).
+seguro(X,Y) :- sentidos([]).
+seguro(X,Y) :- nao_tem(X,Y,poco), nao_tem(X,Y,inimigo).
 
-seguro(X,Y) :- (
-	obs_por_casa(X, Y, none); (
-		posicao(PX, PY, _), obs_por_casa(PX, PY, none), (
-			map_size(MAX_X,_), (X < MAX_X, X is PX + 1);
-			map_size(MAX_X,_), (X > 1, X is PX - 1);
-			map_size(_, MAX_Y), (Y < MAX_Y, Y is PY + 1);
-			map_size(_, MAX_Y), (Y > 1, Y is PY - 1)
-		)
-	)
-).
-
-goal(X, Y) :- ( 
-	adjacente(X,Y), seguro(X,Y), (
-		\+visitado(X,Y)
-	)
+goal(X,Y) :- (
+	posicao(PX,PY,_),
+	vizinho(PX,PY,X,Y),
+	seguro(X,Y),
+	\+visitado(X,Y)
 ).
 
 executa_acao(andar) :- (
-	goal(X,Y), adjacente(X,Y), (
+	verifica_player,
+	goal(X,Y), (
 		esta_acima(X, Y), posicao(_, _, norte);
 		esta_abaixo(X, Y), posicao(_, _, sul);
 		esta_a_dir(X, Y), posicao(_, _, leste);
@@ -332,7 +315,7 @@ executa_acao(andar) :- (
 ).
 
 executa_acao(virar_direita) :- (
-	goal(X,Y), adjacente(X,Y), (
+	goal(X,Y), (
 		esta_acima(X, Y), posicao(_, _, oeste);
 		esta_abaixo(X, Y), posicao(_, _, leste);
 		esta_a_dir(X, Y), posicao(_, _, norte);
@@ -341,7 +324,7 @@ executa_acao(virar_direita) :- (
 ).
 
 executa_acao(virar_esquerda) :- (
-	goal(X,Y), adjacente(X,Y), (
+	goal(X,Y), (
 		esta_acima(X, Y), posicao(_, _, leste);
 		esta_abaixo(X, Y), posicao(_, _, oeste);
 		esta_a_dir(X, Y), posicao(_, _, sul);
@@ -349,10 +332,7 @@ executa_acao(virar_esquerda) :- (
 	)
 ).
 executa_acao(voltar) :- \+goal(_,_).
+
 executa_acao(virar_esquerda).
-
-
-obs_por_casa(1, 1, none).
-
 
 
